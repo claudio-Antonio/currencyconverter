@@ -1,16 +1,28 @@
 package com.example.conversordemoedas.ui.feature.converter
 
+import android.os.Message
 import android.util.Log
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.conversordemoedas.domain.repository.CurrencyRepository
 import com.example.conversordemoedas.ui.feature.converter.model.ConverterFormEvent
 import com.example.conversordemoedas.ui.feature.converter.model.ConverterFormState
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
-class ConverterViewModel: ViewModel() {
+@HiltViewModel
+class ConverterViewModel @Inject constructor(
+    private val currencyRepository: CurrencyRepository
+): ViewModel() {
     private val _formState = MutableStateFlow(ConverterFormState())
     val formState = _formState.asStateFlow()
+
+    private val _conversionState = MutableStateFlow<ConversionState>(ConversionState.Idle)
+    val convertionState = _conversionState.asStateFlow()
 
     init {
         _formState.update {
@@ -44,8 +56,54 @@ class ConverterViewModel: ViewModel() {
             }
 
             ConverterFormEvent.SendConverterForm -> {
-                Log.d("ConverterViewModel", "onFormEvent: ${_formState.value}")
+                convertCurrency()
             }
         }
+    }
+
+    private fun convertCurrency() {
+        viewModelScope.launch {
+            val fromCurrency = _formState.value.fromCurrencySelected
+            val toCurrency = _formState.value.toCurrencySelected
+            val amount = _formState.value.fromCurrencyAmount.toDoubleOrNull()
+
+            if(fromCurrency.isNotBlank() && toCurrency.isNotBlank() && amount != null) {
+                _conversionState.update {
+                    ConversionState.Loading
+                }
+
+                currencyRepository.convertCurrency(
+                    fromCurrency = fromCurrency,
+                    toCurrency = toCurrency,
+                    amount = amount
+                ).fold(
+                    onSuccess = { currencyConversion ->
+                        _formState.update {
+                            it.copy(toCurrencyAmount = currencyConversion.convertionResult)
+                        }
+
+                        _conversionState.update {
+                            ConversionState.Success
+                        }
+                    },
+                    onFailure = { error ->
+                        _conversionState.update {
+                            ConversionState.Error(error.message ?: "Erro desconhecido")
+                        }
+                    }
+                )
+            } else {
+                _conversionState.update {
+                    ConversionState.Error("Valores inválidos")
+                }
+            }
+        }
+    }
+
+    sealed interface ConversionState {
+        object Idle: ConversionState
+        object Loading: ConversionState
+        object Success: ConversionState
+        data class Error(val message: String) : ConversionState
     }
 }
